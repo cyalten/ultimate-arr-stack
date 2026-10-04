@@ -30,6 +30,8 @@ set -euo pipefail
 # What is NEVER removed:
 #   - Items with any download progress (even if slow)
 #   - Healthy downloads (trackedDownloadStatus == "ok" with progress)
+#   - Downloads waiting for a manual import because Sonarr/Radarr matched
+#     them by ID. These are good files; the report lists them instead.
 #
 # After removal, a fresh search is triggered for each affected
 # series (Sonarr) or movie (Radarr) to find better-seeded releases.
@@ -91,8 +93,9 @@ get_api_key() {
   if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${container}$"; then
     return 1
   fi
+  # sed rather than grep -P, which BSD grep lacks, so the tests run on macOS.
   docker exec "$container" cat /config/config.xml 2>/dev/null \
-    | grep -oP '(?<=<ApiKey>)[^<]+' || return 1
+    | sed -n 's:.*<ApiKey>\([^<]*\)</ApiKey>.*:\1:p' || return 1
 }
 
 SONARR_KEY=$(get_api_key sonarr) || true
@@ -103,15 +106,22 @@ if [[ -z "$SONARR_KEY" ]] && [[ -z "$RADARR_KEY" ]]; then
   exit 1
 fi
 
+# The python below writes the Home Assistant notice here, since only it knows
+# what the run found.
+NOTICE_FILE=$(mktemp)
+trap 'rm -f "$NOTICE_FILE"' EXIT
+
 # --- Main cleanup logic (python3 for JSON processing) ---
-python3 - "$APPLY" "$VERBOSE" "$SONARR_KEY" "$RADARR_KEY" << 'PYEOF'
-import json, sys, subprocess, time
+python3 - "$APPLY" "$VERBOSE" "$SONARR_KEY" "$RADARR_KEY" "$NOTICE_FILE" "$NAS_STACK_DIR" << 'PYEOF'
+import json, re, sys, subprocess, time
 from datetime import datetime, timezone
 
 APPLY = sys.argv[1] == "true"
 VERBOSE = sys.argv[2] == "true"
 SONARR_KEY = sys.argv[3]
 RADARR_KEY = sys.argv[4]
+NOTICE_FILE = sys.argv[5]
+NAS_STACK_DIR = sys.argv[6]
 
 SERVICES = []
 if SONARR_KEY:
@@ -135,6 +145,7 @@ if RADARR_KEY:
 
 total_removed = 0
 total_searches = 0
+waiting = []  # (app, title) left for a manual import
 
 def api_get(port, path, key):
     url = f"http://localhost:{port}{path}"
@@ -187,6 +198,28 @@ def item_age_hours(record):
         return (datetime.now(timezone.utc) - added).total_seconds() / 3600
     except (ValueError, TypeError):
         return None
+
+# Sonarr and Radarr word this "...release was matched to series by ID..." and
+# "...matched to movie by ID...".
+MATCHED_BY_ID = re.compile(r"matched to (series|movie) by id", re.IGNORECASE)
+
+def needs_manual_import(record):
+    """True for a finished download that Sonarr/Radarr grabbed by ID but won't
+    import on its own.
+
+    An ID search lets the indexer say which show or film a release is, so a
+    release whose name Sonarr can't recognise still gets grabbed (Netflix
+    releases of a Korean show under its romanised title, say). When it
+    finishes, Sonarr refuses to import it without a human, on purpose, in case
+    the indexer was wrong. The file is usually fine, and Sonarr has already
+    sent a "Needs manual import" notice. Removing it here would blocklist a
+    good release and throw the download away, so leave it and report it.
+    """
+    if record.get("trackedDownloadState") != "importBlocked":
+        return False
+    return any(MATCHED_BY_ID.search(m)
+               for sm in record.get("statusMessages", [])
+               for m in sm.get("messages", []))
 
 def is_stuck(record):
     """Determine if a queue record is stuck and should be removed."""
@@ -314,6 +347,13 @@ for svc in SERVICES:
 
     stuck_items = []
     for record in all_records:
+        if needs_manual_import(record):
+            # A season pack is one queue record per episode; list it once.
+            entry = (svc["name"], record.get("title", "unknown"))
+            if entry not in waiting:
+                waiting.append(entry)
+                print(f"  - Left for manual import: {entry[1][:70]}")
+            continue
         reason_type, reason_msg = is_stuck(record)
         if reason_type:
             stuck_items.append((record, reason_type, reason_msg))
@@ -391,13 +431,38 @@ mode = "APPLIED" if APPLY else "DRY RUN"
 print(f"Summary ({mode}): {total_removed} items removed, {total_searches} searches triggered")
 if not APPLY and total_removed > 0:
     print("Run with --apply to actually remove stuck items")
+if waiting:
+    print(f"Left for manual import: {len(waiting)} (Activity → Queue in Sonarr/Radarr)")
+
+# The weekly report. A download still waiting for a manual import is worth a
+# push (warning); anything else is a routine note for the HA panel (info).
+if waiting:
+    n = len(waiting)
+    names = [t for _, t in waiting]
+    shown = ", ".join(names[:3]) + (f" and {n - 3} more" if n > 3 else "")
+    apps = " / ".join(sorted({a for a, _ in waiting}))
+    downloads, them = ("download", "it") if n == 1 else ("downloads", "them")
+    notice = {
+        "title": f"Still needs manual import: {n} {downloads}",
+        "message": f"The weekly cleanup left {n} {downloads} waiting for a manual "
+                   f"import: {shown}. Open {apps} → Activity → Queue and import {them}.",
+        "level": "warning",
+    }
+else:
+    notice = {
+        "title": "Queue Cleanup",
+        "message": f"Weekly queue cleanup completed. Check {NAS_STACK_DIR}/logs/queue-cleanup.log for details.",
+        "level": "info",
+    }
+with open(NOTICE_FILE, "w") as f:
+    json.dump(notice, f, ensure_ascii=False)
 PYEOF
 
 # --- Optional: HA webhook notification ---
 if $APPLY && [[ -n "${HA_WEBHOOK_URL:-}" ]]; then
   curl -s -m 10 -X POST "$HA_WEBHOOK_URL" \
     -H "Content-Type: application/json" \
-    -d "{\"title\":\"Queue Cleanup\",\"message\":\"Weekly queue cleanup completed. Check $NAS_STACK_DIR/logs/queue-cleanup.log for details.\",\"level\":\"info\"}" || true
+    --data-binary "@$NOTICE_FILE" || true
 fi
 
 # --- Trim log file ---
