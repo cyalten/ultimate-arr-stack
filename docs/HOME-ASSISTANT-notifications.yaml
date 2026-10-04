@@ -5,7 +5,8 @@
 # Three body shapes arrive and are normalised into one notice (title, message,
 # optional link, level):
 #   1. GENERIC  {"title", "message", "level"?, "url"?, "tag"?}: the stack's own
-#      scripts (backup failure = critical, weekly queue-cleanup report = info).
+#      scripts (backup failure = critical, weekly queue-cleanup report = info,
+#      or warning when downloads still wait for a manual import).
 #      Any new sender should use this shape. The same `tag` replaces a notice.
 #   2. ARR      Sonarr/Radarr's webhook (`eventType` + `series`/`episodes` or
 #      `movie`). Health and ManualInteractionRequired are `warning`, the rest `info`.

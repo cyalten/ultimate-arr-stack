@@ -55,6 +55,7 @@ For each part of the stack: which check covers it, where that check runs, whethe
 | `arr-backup.sh` naming, encryption, rotation, exit status on a failed volume, Sonarr/Radarr/Jellyfin database copies and their integrity check (docker, gpg stubbed; real SQLite files) | | fails | blocks | | | | |
 | `configure-apps.sh` HTTP helpers, Bazarr plan, command line | | fails | blocks | | | | |
 | Duplicate `.lan` detection: hook check 8 and `check-dns-duplicates.sh` (SSH, docker and a grep without `-P` faked) | | fails | blocks | | | | |
+| `queue-cleanup.sh` leaves downloads matched by ID for a manual import and names them in the weekly notice, still removing other blocked imports (docker, curl stubbed) | | fails | blocks | | | | |
 | **Live stack** | | | | | | | |
 | App settings and health through their APIs⁸ | | | | | fails | | |
 | UIs log in and render | | | | | fails | | |
@@ -127,7 +128,7 @@ Things nothing checks, or checks that can't see what they're meant to. Each was 
 - **Update discovery rests on hook check 10.** This repository has no Renovate PR, branch or Dependency Dashboard issue, so nothing shows the app is installed. Nothing reports new versions of the digest-pinned CI tool images in `ci.yml`.
 - **YAML outside the compose files is parsed only by the hook, and only when staged.** The `*.yml.example` templates and `renovate.json` are never validated, and the YAML check has no negative test.
 - **Some code is never type-checked or linted.** Playwright strips the e2e specs' types without checking them, and CI never loads the specs at all. The `*.bats` files and the two Python helpers aren't linted.
-- **Untested scripts** (shellcheck at `error` only): `check-network.sh`, `fix-radarr-paths.sh`, `fix-sonarr-folders.sh`, `queue-cleanup.sh`, `restart-stack.sh`, `scan-executables.sh`. Hook checks 3, 6, 7 and 9 have no tests either.
+- **Untested scripts** (shellcheck at `error` only): `check-network.sh`, `fix-radarr-paths.sh`, `fix-sonarr-folders.sh`, `restart-stack.sh`, `scan-executables.sh`. Hook checks 3, 6, 7 and 9 have no tests either.
 - **The three executable-extension lists** in `configure-apps.sh`, `scan-executables.sh` and `media-hygiene.spec.ts` must match, and nothing compares them.
 - **Backups:** a volume that fails to copy prints an error (and posts to `HA_WEBHOOK_URL` if set), but the script still exits 0, and no test covers that path. The volume list is hard-coded and never compared with the compose files. Nothing checks that the scheduled backup ran.
 - **No live test for** cloudflared, Tailscale, dnscrypt-proxy, diun, deunhealth or configarr. The utilities get only their optional `.lan` routes, and the tunnel only hook check 9's two external names.

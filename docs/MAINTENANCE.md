@@ -159,6 +159,8 @@ Add to NAS crontab (`crontab -e`):
 
 Items with **any** download progress are never removed, even if slow.
 
+**Left alone: downloads waiting for a manual import because Sonarr or Radarr matched them by ID.** An ID search lets the indexer say which show or film a release is, so Sonarr grabs releases whose names it can't recognise (a Netflix release of a Korean show under its romanised title, say). When one finishes, Sonarr won't import it on its own, by design, in case the indexer was wrong, and sends a "Needs manual import" notice. The file is usually fine, so the sweep doesn't blocklist it. It names each one in the weekly notice instead, as a `warning`, until you import it (Activity → Queue → the person icon). A grab made from Interactive Search imports normally.
+
 Removed releases are blocklisted so the same broken release won't be grabbed again. A fresh search is triggered for each affected series/movie to find better-seeded alternatives.
 
 ---
