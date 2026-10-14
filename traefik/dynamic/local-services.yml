@@ -17,6 +17,11 @@ http:
       entryPoints: [web]
       service: jellyfin-lan
 
+    plex-lan:
+      rule: "Host(`plex.lan`)"
+      entryPoints: [web]
+      service: plex-lan
+
     seerr-lan:
       rule: "Host(`seerr.lan`)"
       entryPoints: [web]
@@ -107,6 +112,11 @@ http:
       loadBalancer:
         servers:
           - url: "http://172.20.0.4:8096"
+
+    plex-lan:
+      loadBalancer:
+        servers:
+          - url: "http://172.20.0.7:32400"
 
     seerr-lan:
       loadBalancer:

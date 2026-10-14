@@ -56,6 +56,8 @@ volumes:
     name: arr-stack_dnscrypt-config
   pihole-etc-pihole:
     name: arr-stack_pihole-etc-pihole
+  plex-config:
+    name: arr-stack_plex-config
 
 #########################
 # Networks              #
@@ -199,8 +201,9 @@ services:
       # (their own static IPs) and publish their own ports — see those services.
       - "9696:9696"   # Prowlarr
       - "8085:8085"   # qBittorrent
-      - "8082:8080"   # SABnzbd
+      - "8086:8080"   # SABnzbd
       - "8191:8191"   # FlareSolverr
+
     networks:
       arr-stack:
         ipv4_address: 172.20.0.3
@@ -601,3 +604,34 @@ services:
       retries: 2
       start_period: 60s
 
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    ports:
+      - "32400:32400"
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - VERSION=docker
+      - PLEX_CLAIM=${PLEX_CLAIM:-}  # Get from https://plex.tv/claim (expires in 4 mins)
+    # Hardware transcoding (Intel Quick Sync) - remove if no Intel GPU
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GROUP_ID:-0}"
+    volumes:
+      - plex-config:/config
+      - ${MEDIA_ROOT}/media/movies:/media/movies:ro
+      - ${MEDIA_ROOT}/media/tv:/media/tv:ro
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.7  # not used by any stack service
+    restart: always
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:32400/identity"]
+      interval: 1m
+      timeout: 30s
+      retries: 2
+      start_period: 30s
